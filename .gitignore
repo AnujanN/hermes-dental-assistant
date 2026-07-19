@@ -9,7 +9,7 @@ __pycache__/
 # Databases
 db/*.sqlite
 db/*.sqlite-journal
-
+/db_data
 # Virtual Environments
 venv/
 .venv/

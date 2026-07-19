@@ -1,6 +1,7 @@
 import os
 import json
 import base64
+import asyncio
 import logging
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
@@ -42,18 +43,21 @@ async def startup_event():
     except Exception as e:
         logger.error(f"Error initializing PostgreSQL schema: {e}", exc_info=True)
         
-    # 2. Ingest MEMORY.md into Qdrant Vector Collection
+    # 2. Trigger RAG ingestion in the background to keep startup and health checks responsive.
+    asyncio.create_task(_ingest_knowledge_background())
+
+
+async def _ingest_knowledge_background():
     try:
-        # Check in local folder or relative db_server folder
         memory_file = os.path.join(os.path.dirname(__file__), "..", "db_server", "MEMORY.md")
         if not os.path.exists(memory_file):
             memory_file = os.path.join(os.path.dirname(__file__), "MEMORY.md")
-            
+
         if os.path.exists(memory_file):
-            qdrant_manager.ingest_knowledge_document(memory_file)
+            await asyncio.to_thread(qdrant_manager.ingest_knowledge_document, memory_file)
             logger.info("RAG Knowledge base ingested into Qdrant collection.")
         else:
-            logger.warning(f"MEMORY.md file not found at {memory_file}, skipping RAG ingestion.")
+            logger.warning("MEMORY.md file not found at %s, skipping RAG ingestion.", memory_file)
     except Exception as e:
         logger.error(f"Error loading Qdrant knowledge base: {e}", exc_info=True)
 
