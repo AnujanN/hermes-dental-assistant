@@ -7,17 +7,13 @@ ENV PORT=8000
 
 WORKDIR /app
 
-# Install system utilities
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    build-essential \
-    curl \
-    && rm -rf /var/lib/apt/lists/*
+
 
 # Install uv package manager inside the container
 RUN pip install --no-cache-dir uv
 
 # Copy dependencies list
-COPY requirements.txt .
+COPY server/requirements.txt .
 
 # Install dependencies directly into system python using uv
 RUN uv pip install --system --no-cache -r requirements.txt

@@ -3,3 +3,5 @@ uvicorn>=0.22.0
 httpx>=0.24.0
 websockets>=11.0
 python-dotenv>=1.0.0
+qdrant-client>=1.4.0
+sentence-transformers>=2.2.0
