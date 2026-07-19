@@ -1,24 +1,17 @@
 import os
-import tempfile
 import unittest
 from db_server import db_manager
 
 class TestDatabaseOperations(unittest.TestCase):
     def setUp(self):
-        # Create a temp file path for the SQLite test database
-        self.db_fd, self.db_path = tempfile.mkstemp(suffix=".sqlite")
-        os.close(self.db_fd)
-        
-        # Override the env variable so db_manager points to the test DB
-        os.environ["SQLITE_DB_PATH"] = self.db_path
+        self.database_url = os.environ.get("DATABASE_URL", "").strip()
+        if not self.database_url:
+            self.skipTest("DATABASE_URL is not configured; skipping PostgreSQL integration tests.")
+
         db_manager.init_db()
 
     def tearDown(self):
-        # Clean up the test database file
-        if os.path.exists(self.db_path):
-            os.remove(self.db_path)
-        if "SQLITE_DB_PATH" in os.environ:
-            del os.environ["SQLITE_DB_PATH"]
+        pass
 
     def test_upsert_and_get_patient(self):
         # Test patient creation

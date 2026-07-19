@@ -1,4 +1,18 @@
 services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: radiant-postgres
+    environment:
+      POSTGRES_DB: radiant
+      POSTGRES_USER: radiant
+      POSTGRES_PASSWORD: radiant
+    ports:
+      - "5432:5432"
+    volumes:
+      - ./db_data/postgres:/var/lib/postgresql/data
+    networks:
+      - radiant-network
+
   db_server:
     build:
       context: ./db_server
@@ -7,9 +21,10 @@ services:
     env_file:
       - ./db_server/.env
     environment:
-      SQLITE_DB_PATH: /app/db_data/dental_clinic.sqlite
+      DATABASE_URL: postgresql://radiant:radiant@postgres:5432/radiant
+    depends_on:
+      - postgres
     volumes:
-      - ./db_data/sqlite:/app/db_data
       - ./db_server:/app
     networks:
       - radiant-network
@@ -24,11 +39,11 @@ services:
     env_file:
       - ./server/.env
     environment:
-      SQLITE_DB_PATH: /app/db_data/dental_clinic.sqlite
+      DATABASE_URL: postgresql://radiant:radiant@postgres:5432/radiant
     depends_on:
+      - postgres
       - db_server
     volumes:
-      - ./db_data/sqlite:/app/db_data
       - ./db_server:/app/db_server
       - ./server:/app/server
       - ./tests:/app/tests

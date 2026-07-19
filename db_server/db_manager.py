@@ -1,7 +1,13 @@
 import os
-import sqlite3
 import logging
 from pathlib import Path
+
+try:
+    import psycopg2
+    from psycopg2.extras import RealDictCursor
+except ImportError:  # pragma: no cover - handled at runtime in environments without PostgreSQL deps
+    psycopg2 = None
+    RealDictCursor = None
 
 logger = logging.getLogger(__name__)
 
@@ -14,17 +20,16 @@ try:
 except ImportError:
     pass
 
-# Default database file path inside the db_server container
-DEFAULT_DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "dental_clinic.sqlite")
-
-def get_db_path():
-    return os.environ.get("SQLITE_DB_PATH", DEFAULT_DB_PATH)
+def get_database_url():
+    db_url = os.environ.get("DATABASE_URL", "").strip()
+    if not db_url:
+        raise RuntimeError("DATABASE_URL is required for PostgreSQL mode.")
+    return db_url
 
 def get_connection():
-    db_path = get_db_path()
-    os.makedirs(os.path.dirname(db_path), exist_ok=True)
-    conn = sqlite3.connect(db_path)
-    conn.row_factory = sqlite3.Row
+    if psycopg2 is None:
+        raise RuntimeError("psycopg2 is required. Install dependencies from requirements.txt.")
+    conn = psycopg2.connect(get_database_url(), cursor_factory=RealDictCursor)
     return conn
 
 def init_db():
@@ -36,15 +41,15 @@ def init_db():
     with open(schema_path, "r") as f:
         schema_sql = f.read()
         
-    db_path = get_db_path()
-    logger.info(f"Initializing SQLite database at: {db_path}")
+    logger.info("Initializing PostgreSQL database schema...")
     conn = get_connection()
     try:
-        conn.executescript(schema_sql)
+        cursor = conn.cursor()
+        cursor.execute(schema_sql)
         conn.commit()
         logger.info("Database schema successfully initialized.")
     except Exception as e:
-        logger.exception(f"Error during SQLite database schema initialization: {e}")
+        logger.exception(f"Error during PostgreSQL database schema initialization: {e}")
         raise e
     finally:
         conn.close()
@@ -56,11 +61,11 @@ def get_patient(phone_number: str):
     conn = get_connection()
     try:
         cursor = conn.cursor()
-        cursor.execute("SELECT * FROM patients WHERE phone_number = ?", (phone_number,))
+        cursor.execute("SELECT * FROM patients WHERE phone_number = %s", (phone_number,))
         row = cursor.fetchone()
         patient_found = row is not None
         logger.debug(f"Patient profile query finished. Found: {patient_found}")
-        return dict(row) if row else None
+        return row if row else None
     except Exception as e:
         logger.error(f"Error retrieving patient for {phone_number}: {e}", exc_info=True)
         raise e
@@ -72,28 +77,19 @@ def upsert_patient(phone_number: str, name: str, anxieties: str = None, history:
     conn = get_connection()
     try:
         cursor = conn.cursor()
-        cursor.execute("SELECT phone_number FROM patients WHERE phone_number = ?", (phone_number,))
-        exists = cursor.fetchone()
-        
-        if exists:
-            logger.debug(f"Patient {phone_number} exists. Performing UPDATE.")
-            cursor.execute(
-                """
-                UPDATE patients 
-                SET name = ?, anxieties = COALESCE(?, anxieties), history = COALESCE(?, history), last_called = CURRENT_TIMESTAMP
-                WHERE phone_number = ?
-                """,
-                (name, anxieties, history, phone_number)
-            )
-        else:
-            logger.debug(f"Patient {phone_number} is new. Performing INSERT.")
-            cursor.execute(
-                """
-                INSERT INTO patients (phone_number, name, anxieties, history)
-                VALUES (?, ?, ?, ?)
-                """,
-                (phone_number, name, anxieties, history)
-            )
+        cursor.execute(
+            """
+            INSERT INTO patients (phone_number, name, anxieties, history)
+            VALUES (%s, %s, %s, %s)
+            ON CONFLICT (phone_number)
+            DO UPDATE SET
+                name = EXCLUDED.name,
+                anxieties = COALESCE(EXCLUDED.anxieties, patients.anxieties),
+                history = COALESCE(EXCLUDED.history, patients.history),
+                last_called = CURRENT_TIMESTAMP
+            """,
+            (phone_number, name, anxieties, history),
+        )
         conn.commit()
         logger.info(f"Successfully upserted patient {phone_number}.")
         return get_patient(phone_number)
@@ -112,7 +108,7 @@ def check_slot_available(requested_date: str, requested_time: str) -> bool:
         cursor.execute(
             """
             SELECT id FROM appointments 
-            WHERE requested_date = ? AND requested_time = ? AND status = 'scheduled'
+            WHERE requested_date = %s AND requested_time = %s AND status = 'scheduled'
             """,
             (requested_date, requested_time)
         )
@@ -129,7 +125,7 @@ def get_next_available_slots(requested_date: str, count: int = 3):
         cursor.execute(
             """
             SELECT requested_time FROM appointments 
-            WHERE requested_date = ? AND status = 'scheduled'
+            WHERE requested_date = %s AND status = 'scheduled'
             """,
             (requested_date,)
         )
@@ -155,11 +151,12 @@ def book_appointment(patient_name: str, phone_number: str, requested_date: str, 
         cursor.execute(
             """
             INSERT INTO appointments (patient_name, phone_number, requested_date, requested_time)
-            VALUES (?, ?, ?, ?)
+            VALUES (%s, %s, %s, %s)
+            RETURNING id
             """,
             (patient_name, phone_number, requested_date, requested_time)
         )
-        appointment_id = cursor.lastrowid
+        appointment_id = cursor.fetchone()["id"]
         conn.commit()
         logger.info(f"Appointment successfully booked. ID: {appointment_id}")
         
@@ -171,7 +168,8 @@ def book_appointment(patient_name: str, phone_number: str, requested_date: str, 
             "time": requested_time,
             "message": "Appointment booked successfully."
         }
-    except sqlite3.IntegrityError:
+    except psycopg2.IntegrityError:
+        conn.rollback()
         alternative_slots = get_next_available_slots(requested_date)
         logger.warning(
             "Booking rejected by unique-slot guard for %s %s. Alternatives: %s",
@@ -207,10 +205,10 @@ def start_call_log(caller_phone: str) -> int:
     try:
         cursor = conn.cursor()
         cursor.execute(
-            "INSERT INTO call_logs (caller_phone, start_time) VALUES (?, CURRENT_TIMESTAMP)",
+            "INSERT INTO call_logs (caller_phone, start_time) VALUES (%s, CURRENT_TIMESTAMP) RETURNING id",
             (caller_phone,)
         )
-        log_id = cursor.lastrowid
+        log_id = cursor.fetchone()["id"]
         conn.commit()
         logger.debug(f"Call log initialized. Log ID: {log_id}")
         return log_id
@@ -228,8 +226,8 @@ def end_call_log(log_id: int, transcript: str, sentiment: str, duration_seconds:
         cursor.execute(
             """
             UPDATE call_logs 
-            SET end_time = CURRENT_TIMESTAMP, transcript = ?, sentiment = ?, duration_seconds = ?
-            WHERE id = ?
+            SET end_time = CURRENT_TIMESTAMP, transcript = %s, sentiment = %s, duration_seconds = %s
+            WHERE id = %s
             """,
             (transcript, sentiment, duration_seconds, log_id)
         )
@@ -246,14 +244,14 @@ def get_dashboard_metrics():
     try:
         cursor = conn.cursor()
         
-        cursor.execute("SELECT COUNT(*) FROM call_logs")
-        total_calls = cursor.fetchone()[0]
+        cursor.execute("SELECT COUNT(*) AS total_calls FROM call_logs")
+        total_calls = cursor.fetchone()["total_calls"]
         
-        cursor.execute("SELECT COUNT(*) FROM appointments WHERE status = 'scheduled'")
-        active_appointments = cursor.fetchone()[0]
+        cursor.execute("SELECT COUNT(*) AS active_appointments FROM appointments WHERE status = 'scheduled'")
+        active_appointments = cursor.fetchone()["active_appointments"]
         
-        cursor.execute("SELECT AVG(duration_seconds) FROM call_logs WHERE duration_seconds IS NOT NULL")
-        avg_duration = cursor.fetchone()[0] or 0
+        cursor.execute("SELECT AVG(duration_seconds) AS avg_duration FROM call_logs WHERE duration_seconds IS NOT NULL")
+        avg_duration = cursor.fetchone()["avg_duration"] or 0
         
         cursor.execute("SELECT * FROM call_logs ORDER BY start_time DESC LIMIT 5")
         latest_calls = [dict(row) for row in cursor.fetchall()]

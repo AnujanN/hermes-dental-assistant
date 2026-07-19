@@ -35,12 +35,12 @@ app.add_middleware(
 async def startup_event():
     logger.info("Starting Dental Clinic Gateway server...")
     
-    # 1. Initialize SQLite Database
+    # 1. Initialize PostgreSQL schema
     try:
         db_manager.init_db()
-        logger.info("SQLite Database initialized.")
+        logger.info("PostgreSQL schema initialized.")
     except Exception as e:
-        logger.error(f"Error initializing SQLite database: {e}", exc_info=True)
+        logger.error(f"Error initializing PostgreSQL schema: {e}", exc_info=True)
         
     # 2. Ingest MEMORY.md into Qdrant Vector Collection
     try:

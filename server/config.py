@@ -41,11 +41,9 @@ class Config:
     TWILIO_AUTH_TOKEN = os.environ.get("TWILIO_AUTH_TOKEN", "")
     TWILIO_PHONE_NUMBER = os.environ.get("TWILIO_PHONE_NUMBER", "")
     
-    # SQLite configurations
-    # We resolve it relative to the root directory
+    # Database configuration
     root_dir = Path(__file__).resolve().parent.parent
-    DEFAULT_DB_PATH = str(root_dir / "db" / "dental_clinic.sqlite")
-    SQLITE_DB_PATH = os.environ.get("SQLITE_DB_PATH", DEFAULT_DB_PATH)
+    DATABASE_URL = os.environ.get("DATABASE_URL", "")
     
     # Qdrant configurations
     DEFAULT_QDRANT_HOST = str(root_dir / "db" / "qdrant_storage")
