@@ -1,7 +1,6 @@
 import os
 import json
 import base64
-import asyncio
 import logging
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
@@ -16,10 +15,16 @@ logger = logging.getLogger(__name__)
 
 app = FastAPI(title="Dental Clinic Voice Assistant Gateway")
 
+_session_agents = {}
+
 # Enable CORS for local Vite + React frontend dashboard
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"], # In development, allow all origins
+    allow_origins=[
+        origin.strip()
+        for origin in os.environ.get("ALLOWED_ORIGINS", "http://localhost:5173,http://127.0.0.1:5173").split(",")
+        if origin.strip()
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -65,30 +70,32 @@ async def chat_endpoint(req: ChatRequest):
     Text-based Chat endpoint for the Sandbox Simulator.
     Allows testing the agent's memory, persona, and tools via text.
     """
-    agent = HermesAgent(session_id=req.session_id, caller_phone=req.phone_number)
-    
-    # Start call log in DB if it is the first request in session
-    log_id = db_manager.start_call_log(req.phone_number)
+    session_key = req.session_id.strip() or "sandbox-session"
+    agent = _session_agents.get(session_key)
+    if agent is None:
+        agent = HermesAgent(session_id=session_key, caller_phone=req.phone_number)
+        _session_agents[session_key] = agent
+    elif req.phone_number and req.phone_number != agent.caller_phone:
+        # Refresh patient context if caller changes within a reused UI session.
+        agent.caller_phone = req.phone_number
     
     response_text = await agent.process_message(req.text)
-    
-    # Close call log with transcription summary
-    db_manager.end_call_log(
-        log_id=log_id,
-        transcript=f"Caller: {req.text}\nAlex: {response_text}",
-        sentiment="Neutral",
-        duration_seconds=10
-    )
-    
+
     return {
         "response": response_text,
-        "session_id": req.session_id
+        "session_id": session_key
     }
 
 @app.get("/api/metrics")
 async def get_metrics():
     """Retrieve call volumes, durations, and logs for the dashboard charts"""
     return db_manager.get_dashboard_metrics()
+
+
+@app.get("/health")
+async def health_check():
+    """Lightweight health endpoint for deployment probes."""
+    return {"status": "ok", "service": "radiant-backend"}
 
 @app.get("/api/appointments")
 async def get_appointments():
@@ -156,8 +163,7 @@ async def voice_stream(websocket: WebSocket):
     caller_phone = "Unknown"
     agent = None
     
-    # We maintain standard conversation states
-    loop = asyncio.get_event_loop()
+    audio_buffer = bytearray()
     
     try:
         while True:
@@ -180,11 +186,37 @@ async def voice_stream(websocket: WebSocket):
                 await synthesize_and_send_audio(websocket, stream_sid, greeting)
                 
             elif event == "media":
-                # Raw audio chunk received from Twilio (mulaw 8000Hz base64 encoded)
-                payload_base64 = data["media"]["payload"]
-                # In production, we stream this payload into the Deepgram STT WebSocket client
-                # For this setup: We process audio frames. We mock audio pipeline logs:
-                pass
+                # Raw audio chunk from Twilio (mulaw 8000Hz base64 encoded)
+                payload_base64 = data.get("media", {}).get("payload")
+                if not payload_base64:
+                    continue
+
+                try:
+                    audio_chunk = base64.b64decode(payload_base64)
+                except Exception:
+                    logger.warning("Failed to decode media payload for StreamSid: %s", stream_sid)
+                    continue
+
+                audio_buffer.extend(audio_chunk)
+
+                # Process in coarse batches to avoid one LLM call per packet.
+                if len(audio_buffer) < 24000:
+                    continue
+
+                if not agent:
+                    continue
+
+                transcript = await transcribe_audio_groq(bytes(audio_buffer), filename=f"{stream_sid or 'stream'}_caller.wav")
+                audio_buffer.clear()
+
+                transcript = transcript.strip()
+                if not transcript:
+                    continue
+
+                logger.info("Caller transcript [%s]: %s", stream_sid, transcript)
+                response_text = await agent.process_message(transcript)
+                if response_text:
+                    await synthesize_and_send_audio(websocket, stream_sid, response_text)
                 
             elif event == "stop":
                 logger.info(f"Media Stream stopped event received. StreamSid: {stream_sid}")

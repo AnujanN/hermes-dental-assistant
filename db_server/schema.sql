@@ -21,6 +21,11 @@ CREATE TABLE IF NOT EXISTS appointments (
     FOREIGN KEY(phone_number) REFERENCES patients(phone_number)
 );
 
+-- Prevent concurrent double-booking for active scheduled slots.
+CREATE UNIQUE INDEX IF NOT EXISTS uq_appointments_scheduled_slot
+ON appointments (requested_date, requested_time)
+WHERE status = 'scheduled';
+
 -- Table to store call logs and operational metrics for the dashboard
 CREATE TABLE IF NOT EXISTS call_logs (
     id INTEGER PRIMARY KEY AUTOINCREMENT,

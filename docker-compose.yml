@@ -1,0 +1,60 @@
+services:
+  db_server:
+    build:
+      context: ./db_server
+      dockerfile: Dockerfile
+    container_name: radiant-db-server
+    env_file:
+      - ./db_server/.env
+    environment:
+      SQLITE_DB_PATH: /app/db_data/dental_clinic.sqlite
+    volumes:
+      - ./db_data/sqlite:/app/db_data
+      - ./db_server:/app
+    networks:
+      - radiant-network
+
+  backend:
+    build:
+      context: .
+      dockerfile: server/Dockerfile
+    container_name: radiant-backend
+    ports:
+      - "8000:8000"
+    env_file:
+      - ./server/.env
+    environment:
+      SQLITE_DB_PATH: /app/db_data/dental_clinic.sqlite
+    depends_on:
+      - db_server
+    volumes:
+      - ./db_data/sqlite:/app/db_data
+      - ./db_server:/app/db_server
+      - ./server:/app/server
+      - ./tests:/app/tests
+    networks:
+      - radiant-network
+
+  frontend:
+    build:
+      context: ./client
+      dockerfile: Dockerfile
+    container_name: radiant-frontend
+    ports:
+      - "5173:5173"
+    env_file:
+      - ./client/.env
+    environment:
+      VITE_API_URL: http://localhost:8000
+    depends_on:
+      - backend
+    volumes:
+      - ./client:/app
+      - /app/node_modules
+    networks:
+      - radiant-network
+
+networks:
+  radiant-network:
+    name: radiant-network
+    driver: bridge

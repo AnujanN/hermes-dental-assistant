@@ -1,8 +1,4 @@
-version: '3.8'
-
 services:
-
-  # 2. Database & RAG Initializer
   db_server:
     build:
       context: .
@@ -10,6 +6,8 @@ services:
     container_name: radiant-db-server
     env_file:
       - .env
+    environment:
+      SQLITE_DB_PATH: /app/db_data/dental_clinic.sqlite
     volumes:
       - ../db_data/sqlite:/app/db_data
       - .:/app

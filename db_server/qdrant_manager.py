@@ -19,11 +19,19 @@ except ImportError:
 
 _encoder = None
 
+
+class FastEmbedEncoder:
+    def __init__(self):
+        from fastembed import TextEmbedding
+        self._model = TextEmbedding(model_name="BAAI/bge-small-en-v1.5")
+
+    def encode(self, text: str):
+        return next(self._model.embed([text]))
+
 def get_encoder():
     global _encoder
     if _encoder is None:
-        from sentence_transformers import SentenceTransformer
-        _encoder = SentenceTransformer("BAAI/bge-small-en-v1.5")
+        _encoder = FastEmbedEncoder()
     return _encoder
 
 _qdrant_client = None

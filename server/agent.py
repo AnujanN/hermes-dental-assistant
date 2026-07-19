@@ -168,9 +168,7 @@ class HermesAgent:
         
         # Split into words to assess count
         words = clean.split()
-        if len(words) > 20: # soft limit check
-            # We truncate and add emergency fallback or warning log
-            # In production, we'd log a validation warning.
-            pass
+        if len(words) > 15:
+            clean = " ".join(words[:15]).rstrip(" ,;:-") + "."
             
         return clean

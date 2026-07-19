@@ -130,3 +130,68 @@ To verify that the RAG indexing, chunking, and search logic works correctly, run
     .venv-win\Scripts\python -m unittest tests/test_rag.py
     ```
 
+---
+
+## 🌐 Free Deployment (Interview-Ready)
+
+Recommended setup:
+1. Backend on Render (free web service)
+2. Frontend on Vercel (free static hosting)
+3. Qdrant on your existing cloud cluster
+
+### 1) Deploy Backend (Render)
+
+Create a new **Web Service** from this repository.
+
+Use these settings:
+1. Runtime: Docker
+2. Dockerfile path: `server/Dockerfile`
+3. Health check path: `/health`
+4. Port: `8000`
+
+Set these environment variables in Render:
+1. `OPENROUTER_API_KEY` = your key
+2. `OPENROUTER_MODEL` = `nousresearch/hermes-3-llama-3.1-8b`
+3. `OPENROUTER_BASE_URL` = `https://openrouter.ai/api/v1`
+4. `QDRANT_HOST` = your Qdrant cloud URL
+5. `QDRANT_PORT` = `443`
+6. `QDRANT_API_KEY` = your Qdrant API key
+7. `SQLITE_DB_PATH` = `/tmp/dental_clinic.sqlite`
+8. `ALLOWED_ORIGINS` = your Vercel frontend URL (add localhost only if needed)
+
+Optional voice env vars:
+1. `GROQ_API_KEY`
+2. `ELEVENLABS_API_KEY`
+3. Twilio variables
+
+After deploy, verify:
+1. `https://<your-backend>.onrender.com/health`
+2. `https://<your-backend>.onrender.com/docs`
+
+### 2) Deploy Frontend (Vercel)
+
+Create a new Vercel project from this repository and set:
+1. Root directory: `client`
+2. Framework preset: Vite
+3. Build command: `npm run build`
+4. Output directory: `dist`
+
+Set environment variable:
+1. `VITE_API_URL` = your Render backend URL (for example `https://<your-backend>.onrender.com`)
+
+`client/vercel.json` is included so SPA routes are handled correctly.
+
+### 3) What to share with interviewers
+
+Share these links:
+1. Frontend URL (Vercel)
+2. Backend health URL: `https://<backend>/health`
+3. Backend docs URL: `https://<backend>/docs`
+
+Suggested verification flow for reviewers:
+1. Open frontend and use Live Agent Simulator (`/api/chat`)
+2. Create manual appointments and check they appear in ledger
+3. Open backend docs and run `/api/metrics` and `/api/appointments`
+
+Note: free tiers can sleep after inactivity, so first request may take longer.
+

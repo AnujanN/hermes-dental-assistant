@@ -149,15 +149,6 @@ def book_appointment(patient_name: str, phone_number: str, requested_date: str, 
     logger.info(f"Attempting to book appointment for '{patient_name}' ({phone_number}) on {requested_date} at {requested_time}")
     upsert_patient(phone_number, patient_name)
     
-    if not check_slot_available(requested_date, requested_time):
-        alternative_slots = get_next_available_slots(requested_date)
-        logger.warning(f"Booking failed: Slot {requested_date} {requested_time} is already taken. Alternatives: {alternative_slots}")
-        return {
-            "success": False,
-            "message": f"Slot {requested_date} at {requested_time} is fully booked.",
-            "alternatives": alternative_slots
-        }
-        
     conn = get_connection()
     try:
         cursor = conn.cursor()
@@ -179,6 +170,19 @@ def book_appointment(patient_name: str, phone_number: str, requested_date: str, 
             "date": requested_date,
             "time": requested_time,
             "message": "Appointment booked successfully."
+        }
+    except sqlite3.IntegrityError:
+        alternative_slots = get_next_available_slots(requested_date)
+        logger.warning(
+            "Booking rejected by unique-slot guard for %s %s. Alternatives: %s",
+            requested_date,
+            requested_time,
+            alternative_slots,
+        )
+        return {
+            "success": False,
+            "message": f"Slot {requested_date} at {requested_time} is fully booked.",
+            "alternatives": alternative_slots,
         }
     except Exception as e:
         logger.error(f"Error booking appointment for {patient_name} on {requested_date} at {requested_time}: {e}", exc_info=True)
