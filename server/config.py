@@ -17,10 +17,15 @@ class Config:
     OPENROUTER_MODEL = os.environ.get("OPENROUTER_MODEL", "nousresearch/hermes-3-llama-3.1-8b")
     OPENROUTER_BASE_URL = os.environ.get("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1")
     
-    # Deepgram configurations
-    DEEPGRAM_API_KEY = os.environ.get("DEEPGRAM_API_KEY", "")
-    DEEPGRAM_STT_MODEL = os.environ.get("DEEPGRAM_STT_MODEL", "nova-2-medical")
-    DEEPGRAM_TTS_MODEL = os.environ.get("DEEPGRAM_TTS_MODEL", "aura-helios-en")
+    # Groq configurations
+    GROQ_API_KEY = os.environ.get("GROQ_API_KEY", "")
+    GROQ_TRANSCRIPTION_MODEL = os.environ.get("GROQ_TRANSCRIPTION_MODEL", "whisper-large-v3")
+    GROQ_BASE_URL = os.environ.get("GROQ_BASE_URL", "https://api.groq.com/openai/v1")
+    
+    # ElevenLabs configurations
+    ELEVENLABS_API_KEY = os.environ.get("ELEVENLABS_API_KEY", "")
+    ELEVENLABS_VOICE_ID = os.environ.get("ELEVENLABS_VOICE_ID", "21m00Tcm4TlvDq8ikWAM")
+    ELEVENLABS_MODEL_ID = os.environ.get("ELEVENLABS_MODEL_ID", "eleven_turbo_v2_5")
     
     # Twilio configurations
     TWILIO_ACCOUNT_SID = os.environ.get("TWILIO_ACCOUNT_SID", "")
@@ -49,8 +54,10 @@ class Config:
         warnings = []
         if not cls.OPENROUTER_API_KEY:
             warnings.append("OPENROUTER_API_KEY is not set. OpenRouter LLM will not function.")
-        if not cls.DEEPGRAM_API_KEY:
-            warnings.append("DEEPGRAM_API_KEY is not set. Deepgram speech STT/TTS will not function.")
+        if not cls.GROQ_API_KEY:
+            warnings.append("GROQ_API_KEY is not set. Groq Whisper STT will not function.")
+        if not cls.ELEVENLABS_API_KEY:
+            warnings.append("ELEVENLABS_API_KEY is not set. ElevenLabs TTS will not function.")
         
         if warnings:
             print("\n" + "="*60)

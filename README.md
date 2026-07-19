@@ -12,7 +12,8 @@ graph TD
     Twilio <-->|WebSocket Stream /voice/stream| FastAPI[FastAPI Server :8000]
     
     FastAPI <-->|OpenRouter API| LLM[Nous Hermes 3 Llama 8B]
-    FastAPI <-->|Deepgram API| Speech[Deepgram STT & TTS]
+    FastAPI <-->|Groq Cloud API| STT[Groq Whisper STT]
+    FastAPI <-->|ElevenLabs API| TTS[ElevenLabs TTS]
     FastAPI <-->|SQL Queries| SQLite[(SQLite DB)]
     FastAPI <-->|Vector Search RAG| Qdrant[(Qdrant Vector DB :6333)]
     
@@ -37,7 +38,8 @@ Before starting, ensure you have:
 *   *Alternatively, if running locally:* Python 3.11+, Node.js 18+, and WSL (Windows Subsystem for Linux) with `uv` package manager installed.
 *   API keys for:
     *   **OpenRouter** (for the `nousresearch/hermes-3-llama-3.1-8b` model)
-    *   **Deepgram** (for STT Nova-2 and TTS Aura)
+    *   **Groq Cloud** (for Whisper STT)
+    *   **ElevenLabs** (for Neural TTS)
     *   **Twilio** (optional, for configuring voice lines)
 
 ---
@@ -48,7 +50,9 @@ Copy the `.env.example` templates in the respective directories to a new `.env` 
 
 1.  **Backend Config**: Copy [**`server/.env.example`**](file:///c:/Users/Anujan/Desktop/Dental_clinic_assistant/server/.env.example) to `server/.env` and update the keys:
     *   `OPENROUTER_API_KEY`
-    *   `DEEPGRAM_API_KEY`
+    *   `GROQ_API_KEY`
+    *   `ELEVENLABS_API_KEY`
+    *   `ELEVENLABS_VOICE_ID` (Optional, defaults to Rachel)
     *   `TWILIO_ACCOUNT_SID` / `TWILIO_AUTH_TOKEN` (Optional)
 2.  **Database Config**: Copy [**`db_server/.env.example`**](file:///c:/Users/Anujan/Desktop/Dental_clinic_assistant/db_server/.env.example) to `db_server/.env`.
 3.  **Frontend Config**: Copy [**`client/.env.example`**](file:///c:/Users/Anujan/Desktop/Dental_clinic_assistant/client/.env.example) to `client/.env`.

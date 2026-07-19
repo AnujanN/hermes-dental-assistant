@@ -195,19 +195,25 @@ async def voice_stream(websocket: WebSocket):
 
 async def synthesize_and_send_audio(websocket: WebSocket, stream_sid: str, text: str):
     """
-    Calls Deepgram TTS REST API to synthesize text response into mulaw audio,
+    Calls ElevenLabs TTS REST API to synthesize text response into mulaw 8000Hz audio,
     and forwards it to the active Twilio Media Stream connection.
     """
-    if not Config.DEEPGRAM_API_KEY:
-        print("Skipping TTS synthesis: DEEPGRAM_API_KEY not configured.")
+    if not Config.ELEVENLABS_API_KEY:
+        print("Skipping TTS synthesis: ELEVENLABS_API_KEY not configured.")
         return
         
-    url = f"https://api.deepgram.com/v1/speak?model={Config.DEEPGRAM_TTS_MODEL}&encoding=mulaw&sample_rate=8000"
+    voice_id = Config.ELEVENLABS_VOICE_ID or "21m00Tcm4TlvDq8ikWAM"
+    url = f"https://api.elevenlabs.io/v1/text-to-speech/{voice_id}?output_format=ulaw_8000"
+    
     headers = {
-        "Authorization": f"Token {Config.DEEPGRAM_API_KEY}",
+        "xi-api-key": Config.ELEVENLABS_API_KEY,
         "Content-Type": "application/json"
     }
-    data = {"text": text}
+    
+    data = {
+        "text": text,
+        "model_id": Config.ELEVENLABS_MODEL_ID or "eleven_turbo_v2_5"
+    }
     
     async with httpx.AsyncClient() as client:
         try:
@@ -225,11 +231,47 @@ async def synthesize_and_send_audio(websocket: WebSocket, stream_sid: str, text:
                     }
                 }
                 await websocket.send_text(json.dumps(media_message))
-                print(f"Audio response sent to Twilio: '{text}'")
+                print(f"Audio response sent to Twilio via ElevenLabs: '{text}'")
             else:
-                print(f"Deepgram TTS error {response.status_code}: {response.text}")
+                print(f"ElevenLabs TTS error {response.status_code}: {response.text}")
         except Exception as e:
-            print(f"Failed to generate TTS audio: {e}")
+            print(f"Failed to generate TTS audio via ElevenLabs: {e}")
+
+async def transcribe_audio_groq(audio_bytes: bytes, filename: str = "caller_audio.wav") -> str:
+    """
+    Sends compiled audio bytes to Groq Cloud's Whisper API endpoint to transcribe.
+    """
+    if not Config.GROQ_API_KEY:
+        print("Skipping transcription: GROQ_API_KEY not configured.")
+        return ""
+        
+    url = f"{Config.GROQ_BASE_URL}/audio/transcriptions"
+    headers = {
+        "Authorization": f"Bearer {Config.GROQ_API_KEY}"
+    }
+    
+    # Send as multipart/form-data
+    files = {
+        "file": (filename, audio_bytes, "audio/wav")
+    }
+    data = {
+        "model": Config.GROQ_TRANSCRIPTION_MODEL or "whisper-large-v3",
+        "response_format": "json"
+    }
+    
+    async with httpx.AsyncClient() as client:
+        try:
+            response = await client.post(url, headers=headers, files=files, data=data, timeout=15.0)
+            if response.status_code == 200:
+                result_json = response.json()
+                transcript = result_json.get("text", "")
+                return transcript
+            else:
+                print(f"Groq STT error {response.status_code}: {response.text}")
+                return ""
+        except Exception as e:
+            print(f"Failed to transcribe audio via Groq: {e}")
+            return ""
 
 if __name__ == "__main__":
     import uvicorn
