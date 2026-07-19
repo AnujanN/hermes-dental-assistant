@@ -2,7 +2,7 @@ import os
 import sqlite3
 from pathlib import Path
 
-# Load env variables from local db-server/.env if exists
+# Load env variables from local db_server/.env if exists
 try:
     from dotenv import load_dotenv
     dotenv_path = Path(__file__).resolve().parent / ".env"
@@ -11,7 +11,7 @@ try:
 except ImportError:
     pass
 
-# Default database file path inside the db-server container
+# Default database file path inside the db_server container
 DEFAULT_DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "dental_clinic.sqlite")
 
 def get_db_path():
@@ -226,4 +226,4 @@ def get_dashboard_metrics():
 
 if __name__ == "__main__":
     init_db()
-    print("Database schema successfully initialized in db-server.")
+    print("Database schema successfully initialized in db_server.")

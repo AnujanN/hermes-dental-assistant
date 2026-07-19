@@ -5,7 +5,7 @@ from qdrant_client import QdrantClient
 from qdrant_client.http import models
 from qdrant_client.http.models import Distance, VectorParams
 
-# Load env variables from local db-server/.env if exists
+# Load env variables from local db_server/.env if exists
 try:
     from dotenv import load_dotenv
     dotenv_path = Path(__file__).resolve().parent / ".env"
@@ -23,19 +23,31 @@ def get_encoder():
         _encoder = SentenceTransformer("BAAI/bge-small-en-v1.5")
     return _encoder
 
-def get_qdrant_client():
-    q_host = os.environ.get("QDRANT_HOST", "db_data/qdrant_storage")
-    q_port = int(os.environ.get("QDRANT_PORT", "6333"))
-    q_api_key = os.environ.get("QDRANT_API_KEY", None)
+_qdrant_client = None
+_last_q_host = None
 
-    # Check if host points to a local directory or :memory:
-    if q_host == ":memory:" or not q_host.startswith("http") and ("/" in q_host or "\\" in q_host or "storage" in q_host):
-        if q_host != ":memory:":
-            os.makedirs(q_host, exist_ok=True)
-        return QdrantClient(path=q_host)
-    else:
-        # Docker/Network service connection
-        return QdrantClient(host=q_host, port=q_port, api_key=q_api_key)
+def get_qdrant_client():
+    global _qdrant_client, _last_q_host
+    q_host = os.environ.get("QDRANT_HOST", "db_data/qdrant_storage")
+    
+    if _qdrant_client is None or q_host != _last_q_host:
+        q_port = int(os.environ.get("QDRANT_PORT", "6333"))
+        q_api_key = os.environ.get("QDRANT_API_KEY", None)
+
+        # Check if host points to a local directory or :memory:
+        if q_host == ":memory:" or not q_host.startswith("http") and ("/" in q_host or "\\" in q_host or "storage" in q_host):
+            if q_host != ":memory:":
+                os.makedirs(q_host, exist_ok=True)
+            _qdrant_client = QdrantClient(path=q_host)
+        else:
+            # Docker/Network or Qdrant Cloud connection
+            if q_host.startswith("http://") or q_host.startswith("https://"):
+                _qdrant_client = QdrantClient(url=q_host, api_key=q_api_key)
+            else:
+                _qdrant_client = QdrantClient(host=q_host, port=q_port, api_key=q_api_key)
+        _last_q_host = q_host
+        
+    return _qdrant_client
 
 def init_qdrant_collection(collection_name: str = "clinic_knowledge"):
     client = get_qdrant_client()
@@ -62,36 +74,33 @@ def chunk_markdown_file(file_path: str, chunk_size: int = 1000, overlap: int = 1
     with open(file_path, "r", encoding="utf-8") as f:
         content = f.read()
 
-    sections = re.split(r'\n(##?#? .*)\n', content)
-    chunks = []
-    current_section = "General info"
-    
-    i = 0
-    while i < len(sections):
-        part = sections[i].strip()
-        if not part:
-            i += 1
-            continue
-            
-        if part.startswith("#"):
-            current_section = part.replace("#", "").strip()
-            if i + 1 < len(sections):
-                body = sections[i + 1].strip()
-                i += 2
-            else:
-                body = ""
-                i += 1
+    lines = content.split("\n")
+    sections = []
+    current_header = "General info"
+    current_lines = []
+
+    for line in lines:
+        stripped = line.strip()
+        if stripped.startswith("#"):
+            if current_lines:
+                sections.append((current_header, "\n".join(current_lines).strip()))
+                current_lines = []
+            current_header = stripped.replace("#", "").strip()
         else:
-            body = part
-            i += 1
-            
+            current_lines.append(line)
+
+    if current_lines:
+        sections.append((current_header, "\n".join(current_lines).strip()))
+
+    chunks = []
+    for header, body in sections:
         if not body:
             continue
             
         if len(body) <= chunk_size:
             chunks.append({
-                "content": f"Section: {current_section}\n\n{body}",
-                "metadata": {"section": current_section}
+                "content": f"Section: {header}\n\n{body}",
+                "metadata": {"section": header}
             })
         else:
             start = 0
@@ -104,8 +113,8 @@ def chunk_markdown_file(file_path: str, chunk_size: int = 1000, overlap: int = 1
                 
                 chunk_text = body[start:end].strip()
                 chunks.append({
-                    "content": f"Section: {current_section} (cont.)\n\n{chunk_text}",
-                    "metadata": {"section": current_section}
+                    "content": f"Section: {header} (cont.)\n\n{chunk_text}",
+                    "metadata": {"section": header}
                 })
                 
                 start += (chunk_size - overlap)
@@ -126,7 +135,8 @@ def ingest_knowledge_document(file_path: str, collection_name: str = "clinic_kno
     points = []
     for idx, chunk in enumerate(chunks):
         text = chunk["content"]
-        vector = encoder.encode(text).tolist()
+        res = encoder.encode(text)
+        vector = res.tolist() if hasattr(res, "tolist") else list(res)
         
         points.append(
             models.PointStruct(
@@ -155,17 +165,18 @@ def search_knowledge(query: str, collection_name: str = "clinic_knowledge", top_
     client = get_qdrant_client()
     encoder = get_encoder()
     
-    query_vector = encoder.encode(query).tolist()
+    res = encoder.encode(query)
+    query_vector = res.tolist() if hasattr(res, "tolist") else list(res)
     
-    results = client.search(
+    results = client.query_points(
         collection_name=collection_name,
-        query_vector=query_vector,
+        query=query_vector,
         limit=top_k,
         with_payload=True
     )
     
     hits = []
-    for hit in results:
+    for hit in results.points:
         if hit.score >= threshold:
             hits.append({
                 "content": hit.payload["content"],

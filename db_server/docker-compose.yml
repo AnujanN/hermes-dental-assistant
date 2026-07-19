@@ -15,7 +15,7 @@ services:
     restart: always
 
   # 2. Database & RAG Initializer
-  db-server:
+  db_server:
     build:
       context: .
       dockerfile: Dockerfile

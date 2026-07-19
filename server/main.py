@@ -36,8 +36,8 @@ async def startup_event():
         
     # 2. Ingest MEMORY.md into Qdrant Vector Collection
     try:
-        # Check in local folder or relative db-server folder
-        memory_file = os.path.join(os.path.dirname(__file__), "..", "db-server", "MEMORY.md")
+        # Check in local folder or relative db_server folder
+        memory_file = os.path.join(os.path.dirname(__file__), "..", "db_server", "MEMORY.md")
         if not os.path.exists(memory_file):
             memory_file = os.path.join(os.path.dirname(__file__), "MEMORY.md")
             

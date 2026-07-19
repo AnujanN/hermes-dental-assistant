@@ -23,7 +23,7 @@ COPY requirements.txt .
 RUN uv pip install --system --no-cache -r requirements.txt
 
 # Copy application directories
-COPY db-server /app/db_server
+COPY db_server /app/db_server
 COPY server /app/server
 COPY tests /app/tests
 
