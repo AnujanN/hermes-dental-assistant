@@ -1,0 +1,24 @@
+version: '3.8'
+
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: radiant-backend
+    ports:
+      - "8000:8000"
+    env_file:
+      - .env
+    volumes:
+      - ../db_data/sqlite:/app/db_data
+      - ../db-server:/app/db_server
+      - .:/app/server
+      - ../tests:/app/tests
+    networks:
+      - radiant-network
+
+networks:
+  radiant-network:
+    name: radiant-network
+    external: true

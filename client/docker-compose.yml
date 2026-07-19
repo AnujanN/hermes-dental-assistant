@@ -1,0 +1,22 @@
+version: '3.8'
+
+services:
+  frontend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: radiant-frontend
+    ports:
+      - "5173:5173"
+    env_file:
+      - .env
+    volumes:
+      - .:/app
+      - /app/node_modules
+    networks:
+      - radiant-network
+
+networks:
+  radiant-network:
+    name: radiant-network
+    external: true

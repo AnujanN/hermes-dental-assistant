@@ -1,0 +1,38 @@
+version: '3.8'
+
+services:
+  # 1. Qdrant Vector Database
+  qdrant:
+    image: qdrant/qdrant:latest
+    container_name: radiant-qdrant
+    ports:
+      - "6333:6333"
+      - "6334:6334"
+    volumes:
+      - ../db_data/qdrant:/qdrant/storage
+    networks:
+      - radiant-network
+    restart: always
+
+  # 2. Database & RAG Initializer
+  db-server:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: radiant-db-server
+    env_file:
+      - .env
+    volumes:
+      - ../db_data/sqlite:/app/db_data
+      - .:/app
+    depends_on:
+      - qdrant
+    links:
+      - qdrant
+    networks:
+      - radiant-network
+
+networks:
+  radiant-network:
+    name: radiant-network
+    driver: bridge

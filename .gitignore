@@ -1,0 +1,31 @@
+# Python Cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.ipynb_checkpoints
+.pytest_cache/
+
+# Databases
+db/*.sqlite
+db/*.sqlite-journal
+
+# Virtual Environments
+venv/
+.venv/
+
+
+# Node / React Frontend
+node_modules/
+client/node_modules/
+dist/
+client/dist/
+.eslintcache
+
+# Local configuration and secrets
+.env
+
+
+# Operating System Files
+.DS_Store
+Thumbs.db
