@@ -1,6 +1,9 @@
 import os
 import sqlite3
+import logging
 from pathlib import Path
+
+logger = logging.getLogger(__name__)
 
 # Load env variables from local db_server/.env if exists
 try:
@@ -27,31 +30,45 @@ def get_connection():
 def init_db():
     schema_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "schema.sql")
     if not os.path.exists(schema_path):
+        logger.error(f"Schema initialization failed: schema file not found at {schema_path}")
         raise FileNotFoundError(f"Schema file not found at {schema_path}")
     
     with open(schema_path, "r") as f:
         schema_sql = f.read()
         
+    db_path = get_db_path()
+    logger.info(f"Initializing SQLite database at: {db_path}")
     conn = get_connection()
     try:
         conn.executescript(schema_sql)
         conn.commit()
+        logger.info("Database schema successfully initialized.")
+    except Exception as e:
+        logger.exception(f"Error during SQLite database schema initialization: {e}")
+        raise e
     finally:
         conn.close()
 
 # --- Patient Database Operations ---
 
 def get_patient(phone_number: str):
+    logger.info(f"Querying patient profile for phone: {phone_number}")
     conn = get_connection()
     try:
         cursor = conn.cursor()
         cursor.execute("SELECT * FROM patients WHERE phone_number = ?", (phone_number,))
         row = cursor.fetchone()
+        patient_found = row is not None
+        logger.debug(f"Patient profile query finished. Found: {patient_found}")
         return dict(row) if row else None
+    except Exception as e:
+        logger.error(f"Error retrieving patient for {phone_number}: {e}", exc_info=True)
+        raise e
     finally:
         conn.close()
 
 def upsert_patient(phone_number: str, name: str, anxieties: str = None, history: str = None):
+    logger.info(f"Upserting patient profile for phone: {phone_number} (name: '{name}')")
     conn = get_connection()
     try:
         cursor = conn.cursor()
@@ -59,6 +76,7 @@ def upsert_patient(phone_number: str, name: str, anxieties: str = None, history:
         exists = cursor.fetchone()
         
         if exists:
+            logger.debug(f"Patient {phone_number} exists. Performing UPDATE.")
             cursor.execute(
                 """
                 UPDATE patients 
@@ -68,6 +86,7 @@ def upsert_patient(phone_number: str, name: str, anxieties: str = None, history:
                 (name, anxieties, history, phone_number)
             )
         else:
+            logger.debug(f"Patient {phone_number} is new. Performing INSERT.")
             cursor.execute(
                 """
                 INSERT INTO patients (phone_number, name, anxieties, history)
@@ -76,7 +95,11 @@ def upsert_patient(phone_number: str, name: str, anxieties: str = None, history:
                 (phone_number, name, anxieties, history)
             )
         conn.commit()
+        logger.info(f"Successfully upserted patient {phone_number}.")
         return get_patient(phone_number)
+    except Exception as e:
+        logger.error(f"Error upserting patient {phone_number}: {e}", exc_info=True)
+        raise e
     finally:
         conn.close()
 
@@ -123,10 +146,12 @@ def get_next_available_slots(requested_date: str, count: int = 3):
         conn.close()
 
 def book_appointment(patient_name: str, phone_number: str, requested_date: str, requested_time: str) -> dict:
+    logger.info(f"Attempting to book appointment for '{patient_name}' ({phone_number}) on {requested_date} at {requested_time}")
     upsert_patient(phone_number, patient_name)
     
     if not check_slot_available(requested_date, requested_time):
         alternative_slots = get_next_available_slots(requested_date)
+        logger.warning(f"Booking failed: Slot {requested_date} {requested_time} is already taken. Alternatives: {alternative_slots}")
         return {
             "success": False,
             "message": f"Slot {requested_date} at {requested_time} is fully booked.",
@@ -145,6 +170,7 @@ def book_appointment(patient_name: str, phone_number: str, requested_date: str, 
         )
         appointment_id = cursor.lastrowid
         conn.commit()
+        logger.info(f"Appointment successfully booked. ID: {appointment_id}")
         
         return {
             "success": True,
@@ -154,6 +180,9 @@ def book_appointment(patient_name: str, phone_number: str, requested_date: str, 
             "time": requested_time,
             "message": "Appointment booked successfully."
         }
+    except Exception as e:
+        logger.error(f"Error booking appointment for {patient_name} on {requested_date} at {requested_time}: {e}", exc_info=True)
+        raise e
     finally:
         conn.close()
 
@@ -169,6 +198,7 @@ def get_all_appointments():
 # --- Call Log & Dashboard Metric Operations ---
 
 def start_call_log(caller_phone: str) -> int:
+    logger.info(f"Starting call log for phone: {caller_phone}")
     conn = get_connection()
     try:
         cursor = conn.cursor()
@@ -178,11 +208,16 @@ def start_call_log(caller_phone: str) -> int:
         )
         log_id = cursor.lastrowid
         conn.commit()
+        logger.debug(f"Call log initialized. Log ID: {log_id}")
         return log_id
+    except Exception as e:
+        logger.error(f"Failed to start call log for {caller_phone}: {e}", exc_info=True)
+        raise e
     finally:
         conn.close()
 
 def end_call_log(log_id: int, transcript: str, sentiment: str, duration_seconds: int):
+    logger.info(f"Ending call log. ID: {log_id}, Sentiment: {sentiment}, Duration: {duration_seconds}s")
     conn = get_connection()
     try:
         cursor = conn.cursor()
@@ -195,6 +230,10 @@ def end_call_log(log_id: int, transcript: str, sentiment: str, duration_seconds:
             (transcript, sentiment, duration_seconds, log_id)
         )
         conn.commit()
+        logger.debug(f"Call log {log_id} successfully closed.")
+    except Exception as e:
+        logger.error(f"Failed to close call log {log_id}: {e}", exc_info=True)
+        raise e
     finally:
         conn.close()
 

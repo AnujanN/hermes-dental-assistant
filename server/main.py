@@ -2,6 +2,7 @@ import os
 import json
 import base64
 import asyncio
+import logging
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
@@ -10,6 +11,8 @@ import httpx
 from server.config import Config
 from server.agent import HermesAgent
 from db_server import db_manager, qdrant_manager
+
+logger = logging.getLogger(__name__)
 
 app = FastAPI(title="Dental Clinic Voice Assistant Gateway")
 
@@ -25,14 +28,14 @@ app.add_middleware(
 # Startup routine: Ingest static memory file and configure DB
 @app.on_event("startup")
 async def startup_event():
-    print("Starting Dental Clinic Gateway server...")
+    logger.info("Starting Dental Clinic Gateway server...")
     
     # 1. Initialize SQLite Database
     try:
         db_manager.init_db()
-        print("SQLite Database initialized.")
+        logger.info("SQLite Database initialized.")
     except Exception as e:
-        print(f"Error initializing SQLite database: {e}")
+        logger.error(f"Error initializing SQLite database: {e}", exc_info=True)
         
     # 2. Ingest MEMORY.md into Qdrant Vector Collection
     try:
@@ -43,11 +46,11 @@ async def startup_event():
             
         if os.path.exists(memory_file):
             qdrant_manager.ingest_knowledge_document(memory_file)
-            print("RAG Knowledge base ingested into Qdrant collection.")
+            logger.info("RAG Knowledge base ingested into Qdrant collection.")
         else:
-            print(f"Warning: MEMORY.md file not found at {memory_file}, skipping RAG ingestion.")
+            logger.warning(f"MEMORY.md file not found at {memory_file}, skipping RAG ingestion.")
     except Exception as e:
-        print(f"Error loading Qdrant knowledge base: {e}")
+        logger.error(f"Error loading Qdrant knowledge base: {e}", exc_info=True)
 
 # --- Rest API Endpoints for Dashboard UI ---
 
@@ -119,7 +122,7 @@ async def voice_incoming(request: Request):
     """
     form_data = await request.form()
     caller = form_data.get("From", "Unknown")
-    print(f"Incoming call from: {caller}")
+    logger.info(f"Twilio /voice/incoming: call received from: {caller}")
     
     # Construct external WebSocket URL (using relative protocol for local tunnels)
     host = request.headers.get("host", "localhost:8000")
@@ -136,6 +139,7 @@ async def voice_incoming(request: Request):
     </Connect>
 </Response>
 """
+    logger.debug(f"Twilio /voice/incoming: generated TwiML directing to {ws_url}")
     return Response(content=twiml_response, media_type="application/xml")
 
 @app.websocket("/voice/stream")
@@ -146,7 +150,7 @@ async def voice_stream(websocket: WebSocket):
     converts replies to speech via Deepgram TTS, and sends audio back to Twilio.
     """
     await websocket.accept()
-    print("Twilio Media Stream WebSocket connected.")
+    logger.info("Twilio Media Stream WebSocket connected.")
     
     stream_sid = None
     caller_phone = "Unknown"
@@ -166,7 +170,7 @@ async def voice_stream(websocket: WebSocket):
                 stream_sid = data["start"]["streamSid"]
                 params = data["start"].get("customParameters", {})
                 caller_phone = params.get("callerNumber", "Unknown")
-                print(f"Media Stream started. StreamSid: {stream_sid}, Caller: {caller_phone}")
+                logger.info(f"Media Stream started. StreamSid: {stream_sid}, Caller: {caller_phone}")
                 
                 # Initialize Agent for this session
                 agent = HermesAgent(session_id=stream_sid, caller_phone=caller_phone)
@@ -183,14 +187,15 @@ async def voice_stream(websocket: WebSocket):
                 pass
                 
             elif event == "stop":
-                print(f"Media Stream stopped. StreamSid: {stream_sid}")
+                logger.info(f"Media Stream stopped event received. StreamSid: {stream_sid}")
                 break
                 
     except WebSocketDisconnect:
-        print("Twilio Media Stream WebSocket disconnected.")
+        logger.info(f"Twilio Media Stream WebSocket disconnected for StreamSid: {stream_sid}")
     except Exception as e:
-        print(f"Error in Media Stream loop: {e}")
+        logger.error(f"Error in Twilio Media Stream loop: {e}", exc_info=True)
     finally:
+        logger.info(f"Closing WebSocket connection for StreamSid: {stream_sid}")
         await websocket.close()
 
 async def synthesize_and_send_audio(websocket: WebSocket, stream_sid: str, text: str):
@@ -199,7 +204,7 @@ async def synthesize_and_send_audio(websocket: WebSocket, stream_sid: str, text:
     and forwards it to the active Twilio Media Stream connection.
     """
     if not Config.ELEVENLABS_API_KEY:
-        print("Skipping TTS synthesis: ELEVENLABS_API_KEY not configured.")
+        logger.warning("Skipping TTS synthesis: ELEVENLABS_API_KEY not configured.")
         return
         
     voice_id = Config.ELEVENLABS_VOICE_ID or "21m00Tcm4TlvDq8ikWAM"
@@ -215,6 +220,7 @@ async def synthesize_and_send_audio(websocket: WebSocket, stream_sid: str, text:
         "model_id": Config.ELEVENLABS_MODEL_ID or "eleven_turbo_v2_5"
     }
     
+    logger.info(f"Synthesizing speech via ElevenLabs for StreamSid: {stream_sid}. Text length: {len(text)}")
     async with httpx.AsyncClient() as client:
         try:
             response = await client.post(url, headers=headers, json=data, timeout=15.0)
@@ -231,18 +237,18 @@ async def synthesize_and_send_audio(websocket: WebSocket, stream_sid: str, text:
                     }
                 }
                 await websocket.send_text(json.dumps(media_message))
-                print(f"Audio response sent to Twilio via ElevenLabs: '{text}'")
+                logger.info(f"Audio response sent to Twilio via ElevenLabs for StreamSid: {stream_sid}. Text: '{text}'")
             else:
-                print(f"ElevenLabs TTS error {response.status_code}: {response.text}")
+                logger.error(f"ElevenLabs TTS error. Status: {response.status_code}, Response: {response.text}")
         except Exception as e:
-            print(f"Failed to generate TTS audio via ElevenLabs: {e}")
+            logger.exception(f"Failed to generate TTS audio via ElevenLabs for StreamSid {stream_sid}: {e}")
 
 async def transcribe_audio_groq(audio_bytes: bytes, filename: str = "caller_audio.wav") -> str:
     """
     Sends compiled audio bytes to Groq Cloud's Whisper API endpoint to transcribe.
     """
     if not Config.GROQ_API_KEY:
-        print("Skipping transcription: GROQ_API_KEY not configured.")
+        logger.warning("Skipping transcription: GROQ_API_KEY not configured.")
         return ""
         
     url = f"{Config.GROQ_BASE_URL}/audio/transcriptions"
@@ -259,18 +265,20 @@ async def transcribe_audio_groq(audio_bytes: bytes, filename: str = "caller_audi
         "response_format": "json"
     }
     
+    logger.info(f"Sending audio bytes to Groq Cloud for STT transcription. Filename: {filename}")
     async with httpx.AsyncClient() as client:
         try:
             response = await client.post(url, headers=headers, files=files, data=data, timeout=15.0)
             if response.status_code == 200:
                 result_json = response.json()
                 transcript = result_json.get("text", "")
+                logger.info(f"Groq transcription completed. Text length: {len(transcript)}")
                 return transcript
             else:
-                print(f"Groq STT error {response.status_code}: {response.text}")
+                logger.error(f"Groq STT error. Status: {response.status_code}, Response: {response.text}")
                 return ""
         except Exception as e:
-            print(f"Failed to transcribe audio via Groq: {e}")
+            logger.exception(f"Failed to transcribe audio via Groq: {e}")
             return ""
 
 if __name__ == "__main__":

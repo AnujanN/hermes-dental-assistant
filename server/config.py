@@ -1,6 +1,8 @@
 import os
 from pathlib import Path
 
+import logging
+
 # Load env variables from root directory .env file if it exists
 try:
     from dotenv import load_dotenv
@@ -10,6 +12,13 @@ try:
         load_dotenv(dotenv_path)
 except ImportError:
     pass
+
+# Configure global logger
+LOG_LEVEL = os.environ.get("LOG_LEVEL", "INFO").upper()
+logging.basicConfig(
+    level=getattr(logging, LOG_LEVEL, logging.INFO),
+    format="%(asctime)s [%(levelname)s] %(name)s - %(message)s"
+)
 
 class Config:
     # OpenRouter API configurations

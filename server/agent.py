@@ -2,11 +2,14 @@ import os
 import re
 import json
 import httpx
+import logging
 from datetime import datetime
 from pathlib import Path
 from server.config import Config
 from server.tools import TOOLS_SPEC, AVAILABLE_TOOLS
 from db_server import db_manager
+
+logger = logging.getLogger(__name__)
 
 # Cache system prompt components
 _soul_content = None
@@ -72,6 +75,7 @@ class HermesAgent:
         and returns the final verbal response string.
         """
         self.messages.append({"role": "user", "content": user_text})
+        logger.info(f"Agent [Session {self.session_id}]: Processing user message. History size: {len(self.messages)}")
         
         headers = {
             "Authorization": f"Bearer {Config.OPENROUTER_API_KEY}",
@@ -84,7 +88,8 @@ class HermesAgent:
         max_iterations = 4
         
         async with httpx.AsyncClient(timeout=30.0) as client:
-            for _ in range(max_iterations):
+            for iteration in range(max_iterations):
+                logger.debug(f"Agent [Session {self.session_id}]: Sending LLM request (iteration {iteration+1}/{max_iterations}). Model: {Config.OPENROUTER_MODEL}")
                 payload = {
                     "model": Config.OPENROUTER_MODEL,
                     "messages": self.messages,
@@ -100,7 +105,7 @@ class HermesAgent:
                     )
                     
                     if response.status_code != 200:
-                        print(f"OpenRouter Error status {response.status_code}: {response.text}")
+                        logger.error(f"OpenRouter API call failed. Status: {response.status_code}, Response: {response.text}")
                         return "I am having trouble connecting to my cognitive services. Please give me a moment."
                         
                     response_data = response.json()
@@ -111,12 +116,13 @@ class HermesAgent:
                     
                     # Check if model wants to run a tool
                     if "tool_calls" in choice and choice["tool_calls"]:
+                        logger.info(f"Agent [Session {self.session_id}]: LLM requested {len(choice['tool_calls'])} tool execution(s).")
                         for tool_call in choice["tool_calls"]:
                             tool_name = tool_call["function"]["name"]
                             tool_args = json.loads(tool_call["function"]["arguments"])
                             tool_id = tool_call["id"]
                             
-                            print(f"Agent [Session {self.session_id}] calls tool: {tool_name} with args: {tool_args}")
+                            logger.info(f"Agent [Session {self.session_id}] calls tool: '{tool_name}' with args: {tool_args}")
                             
                             # Execute local Python function
                             if tool_name in AVAILABLE_TOOLS:
@@ -128,7 +134,7 @@ class HermesAgent:
                             else:
                                 tool_result = f"Error: Tool '{tool_name}' not implemented."
                                 
-                            print(f"Tool {tool_name} returned: {tool_result}")
+                            logger.info(f"Agent [Session {self.session_id}]: Tool '{tool_name}' returned: {tool_result}")
                             
                             # Append tool results back
                             self.messages.append({
@@ -142,10 +148,11 @@ class HermesAgent:
                     else:
                         # No tool calls, return final spoken text
                         content = choice.get("content", "")
+                        logger.debug(f"Agent [Session {self.session_id}]: Generated final response: '{content}'")
                         return self._clean_verbal_response(content)
                         
                 except Exception as e:
-                    print(f"Exception during LLM processing: {str(e)}")
+                    logger.exception(f"Exception during LLM message processing in Session {self.session_id}: {e}")
                     return "Sorry, I encountered a connection error. Could you repeat that?"
                     
             return "I apologize, but I am processing too many operations right now. Can we try again?"
