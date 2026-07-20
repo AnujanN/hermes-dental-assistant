@@ -26,6 +26,7 @@ app.add_middleware(
         for origin in os.environ.get("ALLOWED_ORIGINS", "http://localhost:5173,http://127.0.0.1:5173").split(",")
         if origin.strip()
     ],
+    allow_origin_regex=os.environ.get("ALLOWED_ORIGIN_REGEX", None),
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

@@ -149,7 +149,8 @@ Use this production-like free setup:
     - `QDRANT_API_KEY` = your Qdrant API key
     - `OPENROUTER_API_KEY` = your OpenRouter key
     - `OPENROUTER_MODEL` = `nousresearch/hermes-3-llama-3.1-8b`
-    - `ALLOWED_ORIGINS` = your Vercel frontend URL
+    - `ALLOWED_ORIGINS` = your Vercel production frontend URL (for example `https://your-app.vercel.app`)
+    - `ALLOWED_ORIGIN_REGEX` = optional wildcard for preview deployments (for example `https://.*\\.vercel\\.app`)
 
 ### Frontend on Vercel
 1. Import this repository on Vercel.

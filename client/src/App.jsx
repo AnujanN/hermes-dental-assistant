@@ -2,6 +2,35 @@ import React, { useState, useEffect, useRef } from "react";
 
 const API_BASE = import.meta.env.VITE_API_URL || "http://localhost:8000";
 
+function formatClock(value) {
+  if (!value) return "--:--";
+  const source = String(value);
+
+  // Handle database time strings like HH:MM:SS and HH:MM
+  if (/^\d{2}:\d{2}(:\d{2})?$/.test(source)) {
+    return source.slice(0, 5);
+  }
+
+  const parsed = new Date(source);
+  if (Number.isNaN(parsed.getTime())) return source;
+  return parsed.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+}
+
+function formatDate(value) {
+  if (!value) return "--";
+  const source = String(value);
+  const parsed = new Date(source);
+  if (Number.isNaN(parsed.getTime())) return source;
+  return parsed.toLocaleDateString();
+}
+
+function buildBookingFailureMessage(payload) {
+  const base = payload?.message || "Failed to book slot.";
+  const alternatives = Array.isArray(payload?.alternatives) ? payload.alternatives : [];
+  if (!alternatives.length) return base;
+  return `${base} Next available: ${alternatives.join(", ")}`;
+}
+
 function App() {
   // Metrics and appointments state
   const [metrics, setMetrics] = useState({
@@ -12,11 +41,11 @@ function App() {
   });
   const [appointments, setAppointments] = useState([]);
   const [loadingMetrics, setLoadingMetrics] = useState(true);
+  const [apiHealthy, setApiHealthy] = useState(true);
 
   // Call simulator state
   const [isCallActive, setIsCallActive] = useState(false);
   const [callerPhone, setCallerPhone] = useState("+1 (555) 902-1324");
-  const [callerName, setCallerName] = useState("Jane Doe");
   const [chatInput, setChatInput] = useState("");
   const [chatHistory, setChatHistory] = useState([]);
   const [sessionSid, setSessionSid] = useState("");
@@ -39,18 +68,25 @@ function App() {
   // Fetch metrics & appointments
   const fetchData = async () => {
     try {
-      const resMetrics = await fetch(`${API_BASE}/api/metrics`);
-      if (resMetrics.ok) {
-        const data = await resMetrics.json();
-        setMetrics(data);
+      const [healthRes, metricsRes, appointmentsRes] = await Promise.all([
+        fetch(`${API_BASE}/health`),
+        fetch(`${API_BASE}/api/metrics`),
+        fetch(`${API_BASE}/api/appointments`),
+      ]);
+
+      setApiHealthy(healthRes.ok);
+
+      if (metricsRes.ok) {
+        const metricsData = await metricsRes.json();
+        setMetrics(metricsData);
       }
 
-      const resApps = await fetch(`${API_BASE}/api/appointments`);
-      if (resApps.ok) {
-        const data = await resApps.json();
-        setAppointments(data);
+      if (appointmentsRes.ok) {
+        const appointmentsData = await appointmentsRes.json();
+        setAppointments(Array.isArray(appointmentsData) ? appointmentsData : []);
       }
     } catch (err) {
+      setApiHealthy(false);
       console.error("Error fetching data from backend:", err);
     } finally {
       setLoadingMetrics(false);
@@ -116,6 +152,9 @@ function App() {
 
       if (response.ok) {
         const data = await response.json();
+        if (data?.session_id) {
+          setSessionSid(data.session_id);
+        }
         setChatHistory((prev) => [
           ...prev,
           { role: "agent", text: data.response },
@@ -158,7 +197,7 @@ function App() {
         setBookingForm({ patient_name: "", phone_number: "", date: "", time: "09:00" });
         fetchData();
       } else {
-        setBookingStatus(data.message || "Failed to book slot.");
+        setBookingStatus(buildBookingFailureMessage(data));
       }
     } catch (err) {
       setBookingStatus("Error contacting database.");
@@ -175,7 +214,7 @@ function App() {
         </div>
         <div className="system-status">
           <div className="status-indicator"></div>
-          <span>ALEX BOT: ONLINE</span>
+          <span>{apiHealthy ? "ALEX BOT: ONLINE" : "ALEX BOT: BACKEND UNREACHABLE"}</span>
         </div>
       </header>
 
@@ -205,8 +244,8 @@ function App() {
         <div className="metric-card">
           <div className="metric-icon">🤖</div>
           <div className="metric-info">
-            <h3>Hermes Inference</h3>
-            <p>Nous 8B (OpenRouter)</p>
+            <h3>AI Stack</h3>
+            <p>OpenRouter + Qdrant</p>
           </div>
         </div>
       </div>
@@ -218,7 +257,9 @@ function App() {
         <div className="panel">
           <div className="panel-title">
             <span>Call Analytics logs</span>
-            <span style={{ fontSize: "0.8rem", color: "var(--accent)" }}>Recent activity</span>
+            <span style={{ fontSize: "0.8rem", color: "var(--accent)" }}>
+              {loadingMetrics ? "Loading..." : "Recent activity"}
+            </span>
           </div>
           <div className="logs-list">
             {metrics.latest_calls.length === 0 ? (
@@ -229,7 +270,7 @@ function App() {
                   <div className="log-header">
                     <span className="log-phone">{log.caller_phone}</span>
                     <span className="log-time">
-                      {log.start_time ? log.start_time.split(" ")[1] || log.start_time : "Just now"}
+                      {log.start_time ? formatClock(log.start_time) : "Just now"}
                     </span>
                   </div>
                   <div className="log-snippet">
@@ -249,7 +290,7 @@ function App() {
         <div className="panel">
           <div className="panel-title">
             <span>Clinic Booking Ledger</span>
-            <span style={{ fontSize: "0.8rem", color: "var(--accent)" }}>SQLite Database</span>
+            <span style={{ fontSize: "0.8rem", color: "var(--accent)" }}>PostgreSQL Database</span>
           </div>
           
           <div className="calendar-list">
@@ -262,6 +303,7 @@ function App() {
                 <thead>
                   <tr>
                     <th>Patient Name</th>
+                    <th>Phone</th>
                     <th>Date</th>
                     <th>Time</th>
                     <th>Status</th>
@@ -271,8 +313,9 @@ function App() {
                   {appointments.map((app) => (
                     <tr key={app.id}>
                       <td><strong>{app.patient_name}</strong></td>
-                      <td>{app.requested_date}</td>
-                      <td>{app.requested_time}</td>
+                      <td>{app.phone_number}</td>
+                      <td>{formatDate(app.requested_date)}</td>
+                      <td>{formatClock(app.requested_time)}</td>
                       <td>
                         <span className="status-badge status-scheduled">
                           {app.status}
@@ -440,7 +483,7 @@ function App() {
             </div>
             <div style={{ fontSize: "0.85rem", color: "var(--text-muted)", marginBottom: "16px" }}>
               <div><strong>Caller Number:</strong> {selectedCall.caller_phone}</div>
-              <div><strong>Call Start Time:</strong> {selectedCall.start_time}</div>
+              <div><strong>Call Start Time:</strong> {selectedCall.start_time ? `${formatDate(selectedCall.start_time)} ${formatClock(selectedCall.start_time)}` : "--"}</div>
               <div><strong>Duration:</strong> {selectedCall.duration_seconds || 0} seconds</div>
               <div><strong>Sentiment:</strong> {selectedCall.sentiment}</div>
             </div>

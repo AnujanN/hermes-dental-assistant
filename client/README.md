@@ -1,16 +1,48 @@
-# React + Vite
+# Dental Clinic Assistant Frontend
 
-This template provides a minimal setup to get React working in Vite with HMR and some Oxlint rules.
+React + Vite dashboard for the Dental Clinic Assistant backend.
 
-Currently, two official plugins are available:
+## Backend Contract Used By UI
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+The UI is wired to these FastAPI endpoints:
 
-## React Compiler
+- `GET /health`
+- `GET /api/metrics`
+- `GET /api/appointments`
+- `POST /api/appointments`
+- `POST /api/chat`
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+Database-backed fields displayed in the UI come from PostgreSQL tables defined in `db_server/schema.sql`.
 
-## Expanding the Oxlint configuration
+## Local Development
 
-If you are developing a production application, we recommend using TypeScript with type-aware lint rules enabled. Check out the [TS template](https://github.com/vitejs/vite/tree/main/packages/create-vite/template-react-ts) for information on how to integrate TypeScript and Oxlint's TypeScript related rules in your project.
+1. Install dependencies:
+
+```bash
+npm install
+```
+
+2. Set backend URL (optional). By default, the client uses `http://localhost:8000`:
+
+```bash
+# .env
+VITE_API_URL=http://localhost:8000
+```
+
+3. Start the development server:
+
+```bash
+npm run dev
+```
+
+4. Build for production:
+
+```bash
+npm run build
+```
+
+## Notes
+
+- Appointment times are rendered from PostgreSQL time values.
+- Call timestamps are rendered from backend datetime values.
+- Booking errors include alternative available slots when provided by backend.
