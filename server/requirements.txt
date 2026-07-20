@@ -5,3 +5,4 @@ python-dotenv>=1.0.0
 qdrant-client>=1.4.0
 fastembed>=0.3.6
 psycopg2-binary>=2.9.9
+python-multipart
