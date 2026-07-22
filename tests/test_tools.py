@@ -31,6 +31,14 @@ class TestCustomTools(unittest.TestCase):
         result = clinic_info_retriever("tell me a joke")
         self.assertIn("No specific clinic documentation was found", result)
 
+    def test_clinic_info_retriever_empty_query(self):
+        """Validation should reject an empty query string."""
+        result = clinic_info_retriever("")
+        self.assertIn("Error", result)
+
+        result_whitespace = clinic_info_retriever("   ")
+        self.assertIn("Error", result_whitespace)
+
     @patch("db_server.db_manager.book_appointment")
     def test_calendar_appointment_booker_success(self, mock_book):
         # Mock booking success output
@@ -66,6 +74,21 @@ class TestCustomTools(unittest.TestCase):
         
         self.assertIn("FAILED", result)
         self.assertIn("11:00, 12:00, 13:00", result)
+
+    def test_calendar_appointment_booker_empty_patient_name(self):
+        """Validation should reject an empty patient name."""
+        result = calendar_appointment_booker("", "555-0100", "2026-08-01", "10:00")
+        self.assertIn("Error", result)
+
+    def test_calendar_appointment_booker_invalid_date(self):
+        """Validation should reject a malformed date."""
+        result = calendar_appointment_booker("John Doe", "555-0100", "08-01-2026", "10:00")
+        self.assertIn("Error", result)
+
+    def test_calendar_appointment_booker_invalid_time(self):
+        """Validation should reject a malformed time."""
+        result = calendar_appointment_booker("John Doe", "555-0100", "2026-08-01", "10am")
+        self.assertIn("Error", result)
 
 if __name__ == "__main__":
     unittest.main()

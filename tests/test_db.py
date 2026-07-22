@@ -1,6 +1,7 @@
 import os
 import unittest
 from db_server import db_manager
+from db_server.validators import ValidationError
 
 class TestDatabaseOperations(unittest.TestCase):
     def setUp(self):
@@ -70,6 +71,38 @@ class TestDatabaseOperations(unittest.TestCase):
         self.assertEqual(metrics["avg_duration_seconds"], 45.0)
         self.assertEqual(len(metrics["latest_calls"]), 1)
         self.assertEqual(metrics["latest_calls"][0]["caller_phone"], phone)
+
+    # --- Validation rejection tests ---
+
+    def test_get_patient_invalid_phone(self):
+        """Validation should reject an empty phone number."""
+        with self.assertRaises(ValidationError):
+            db_manager.get_patient("")
+
+    def test_upsert_patient_invalid_name(self):
+        """Validation should reject an empty patient name."""
+        with self.assertRaises(ValidationError):
+            db_manager.upsert_patient("1234567890", "")
+
+    def test_check_slot_invalid_date(self):
+        """Validation should reject a malformed date."""
+        with self.assertRaises(ValidationError):
+            db_manager.check_slot_available("08-10-2026", "09:00")
+
+    def test_check_slot_invalid_time(self):
+        """Validation should reject a malformed time."""
+        with self.assertRaises(ValidationError):
+            db_manager.check_slot_available("2026-08-10", "9am")
+
+    def test_end_call_log_invalid_log_id(self):
+        """Validation should reject a non-positive log ID."""
+        with self.assertRaises(ValidationError):
+            db_manager.end_call_log(log_id=-1, transcript="", sentiment="", duration_seconds=10)
+
+    def test_end_call_log_invalid_duration(self):
+        """Validation should reject a negative duration."""
+        with self.assertRaises(ValidationError):
+            db_manager.end_call_log(log_id=1, transcript="", sentiment="", duration_seconds=-5)
 
 if __name__ == "__main__":
     unittest.main()

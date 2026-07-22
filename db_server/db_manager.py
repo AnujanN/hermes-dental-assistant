@@ -9,6 +9,16 @@ except ImportError:  # pragma: no cover - handled at runtime in environments wit
     psycopg2 = None
     RealDictCursor = None
 
+from db_server.validators import (
+    ValidationError,
+    validate_phone_number,
+    validate_patient_name,
+    validate_date_format,
+    validate_time_format,
+    validate_log_id,
+    validate_duration,
+)
+
 logger = logging.getLogger(__name__)
 
 # Load env variables from local db_server/.env if exists
@@ -29,17 +39,25 @@ def get_database_url():
 def get_connection():
     if psycopg2 is None:
         raise RuntimeError("psycopg2 is required. Install dependencies from requirements.txt.")
-    conn = psycopg2.connect(get_database_url(), cursor_factory=RealDictCursor)
-    return conn
+    try:
+        conn = psycopg2.connect(get_database_url(), cursor_factory=RealDictCursor)
+        return conn
+    except psycopg2.OperationalError as exc:
+        logger.error("Failed to connect to PostgreSQL: %s", exc)
+        raise RuntimeError(f"Database connection failed: {exc}") from exc
 
 def init_db():
     schema_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "schema.sql")
     if not os.path.exists(schema_path):
-        logger.error(f"Schema initialization failed: schema file not found at {schema_path}")
+        logger.error("Schema initialization failed: schema file not found at %s", schema_path)
         raise FileNotFoundError(f"Schema file not found at {schema_path}")
     
-    with open(schema_path, "r") as f:
-        schema_sql = f.read()
+    try:
+        with open(schema_path, "r") as f:
+            schema_sql = f.read()
+    except OSError as exc:
+        logger.error("Failed to read schema file at %s: %s", schema_path, exc)
+        raise
         
     logger.info("Initializing PostgreSQL database schema...")
     conn = get_connection()
@@ -48,32 +66,47 @@ def init_db():
         cursor.execute(schema_sql)
         conn.commit()
         logger.info("Database schema successfully initialized.")
-    except Exception as e:
-        logger.exception(f"Error during PostgreSQL database schema initialization: {e}")
-        raise e
+    except Exception as exc:
+        logger.exception("Error during PostgreSQL database schema initialization: %s", exc)
+        raise
     finally:
         conn.close()
 
 # --- Patient Database Operations ---
 
 def get_patient(phone_number: str):
-    logger.info(f"Querying patient profile for phone: {phone_number}")
+    """Retrieve a patient record by phone number."""
+    try:
+        phone_number = validate_phone_number(phone_number)
+    except ValidationError as exc:
+        logger.error("Invalid input for get_patient: %s", exc)
+        raise
+
+    logger.info("Querying patient profile for phone: %s", phone_number)
     conn = get_connection()
     try:
         cursor = conn.cursor()
         cursor.execute("SELECT * FROM patients WHERE phone_number = %s", (phone_number,))
         row = cursor.fetchone()
         patient_found = row is not None
-        logger.debug(f"Patient profile query finished. Found: {patient_found}")
+        logger.debug("Patient profile query finished. Found: %s", patient_found)
         return row if row else None
-    except Exception as e:
-        logger.error(f"Error retrieving patient for {phone_number}: {e}", exc_info=True)
-        raise e
+    except Exception as exc:
+        logger.error("Error retrieving patient for %s: %s", phone_number, exc, exc_info=True)
+        raise
     finally:
         conn.close()
 
 def upsert_patient(phone_number: str, name: str, anxieties: str = None, history: str = None):
-    logger.info(f"Upserting patient profile for phone: {phone_number} (name: '{name}')")
+    """Create or update a patient record."""
+    try:
+        phone_number = validate_phone_number(phone_number)
+        name = validate_patient_name(name)
+    except ValidationError as exc:
+        logger.error("Invalid input for upsert_patient: %s", exc)
+        raise
+
+    logger.info("Upserting patient profile for phone: %s (name: '%s')", phone_number, name)
     conn = get_connection()
     try:
         cursor = conn.cursor()
@@ -91,17 +124,27 @@ def upsert_patient(phone_number: str, name: str, anxieties: str = None, history:
             (phone_number, name, anxieties, history),
         )
         conn.commit()
-        logger.info(f"Successfully upserted patient {phone_number}.")
+        logger.info("Successfully upserted patient %s.", phone_number)
         return get_patient(phone_number)
-    except Exception as e:
-        logger.error(f"Error upserting patient {phone_number}: {e}", exc_info=True)
-        raise e
+    except ValidationError:
+        raise
+    except Exception as exc:
+        logger.error("Error upserting patient %s: %s", phone_number, exc, exc_info=True)
+        raise
     finally:
         conn.close()
 
 # --- Appointment Calendar Operations ---
 
 def check_slot_available(requested_date: str, requested_time: str) -> bool:
+    """Check whether a specific date/time slot is still open."""
+    try:
+        requested_date = validate_date_format(requested_date)
+        requested_time = validate_time_format(requested_time)
+    except ValidationError as exc:
+        logger.error("Invalid input for check_slot_available: %s", exc)
+        raise
+
     conn = get_connection()
     try:
         cursor = conn.cursor()
@@ -114,10 +157,23 @@ def check_slot_available(requested_date: str, requested_time: str) -> bool:
         )
         row = cursor.fetchone()
         return row is None
+    except Exception as exc:
+        logger.error(
+            "Error checking slot availability for %s at %s: %s",
+            requested_date, requested_time, exc, exc_info=True,
+        )
+        raise
     finally:
         conn.close()
 
 def get_next_available_slots(requested_date: str, count: int = 3):
+    """Return up to *count* available time slots for a given date."""
+    try:
+        requested_date = validate_date_format(requested_date)
+    except ValidationError as exc:
+        logger.error("Invalid input for get_next_available_slots: %s", exc)
+        raise
+
     working_hours = [f"{hour:02d}:00" for hour in range(8, 17)]
     conn = get_connection()
     try:
@@ -138,11 +194,30 @@ def get_next_available_slots(requested_date: str, count: int = 3):
                 if len(available) >= count:
                     break
         return available
+    except Exception as exc:
+        logger.error(
+            "Error fetching available slots for %s: %s",
+            requested_date, exc, exc_info=True,
+        )
+        raise
     finally:
         conn.close()
 
 def book_appointment(patient_name: str, phone_number: str, requested_date: str, requested_time: str) -> dict:
-    logger.info(f"Attempting to book appointment for '{patient_name}' ({phone_number}) on {requested_date} at {requested_time}")
+    """Validate inputs, upsert the patient, and attempt to book a slot."""
+    try:
+        patient_name = validate_patient_name(patient_name)
+        phone_number = validate_phone_number(phone_number)
+        requested_date = validate_date_format(requested_date)
+        requested_time = validate_time_format(requested_time)
+    except ValidationError as exc:
+        logger.error("Invalid input for book_appointment: %s", exc)
+        raise
+
+    logger.info(
+        "Attempting to book appointment for '%s' (%s) on %s at %s",
+        patient_name, phone_number, requested_date, requested_time,
+    )
     upsert_patient(phone_number, patient_name)
     
     conn = get_connection()
@@ -158,7 +233,7 @@ def book_appointment(patient_name: str, phone_number: str, requested_date: str, 
         )
         appointment_id = cursor.fetchone()["id"]
         conn.commit()
-        logger.info(f"Appointment successfully booked. ID: {appointment_id}")
+        logger.info("Appointment successfully booked. ID: %d", appointment_id)
         
         return {
             "success": True,
@@ -182,25 +257,39 @@ def book_appointment(patient_name: str, phone_number: str, requested_date: str, 
             "message": f"Slot {requested_date} at {requested_time} is fully booked.",
             "alternatives": alternative_slots,
         }
-    except Exception as e:
-        logger.error(f"Error booking appointment for {patient_name} on {requested_date} at {requested_time}: {e}", exc_info=True)
-        raise e
+    except Exception as exc:
+        logger.error(
+            "Error booking appointment for %s on %s at %s: %s",
+            patient_name, requested_date, requested_time, exc, exc_info=True,
+        )
+        raise
     finally:
         conn.close()
 
 def get_all_appointments():
+    """Retrieve every appointment ordered by date and time."""
     conn = get_connection()
     try:
         cursor = conn.cursor()
         cursor.execute("SELECT * FROM appointments ORDER BY requested_date ASC, requested_time ASC")
         return [dict(row) for row in cursor.fetchall()]
+    except Exception as exc:
+        logger.error("Error fetching all appointments: %s", exc, exc_info=True)
+        raise
     finally:
         conn.close()
 
 # --- Call Log & Dashboard Metric Operations ---
 
 def start_call_log(caller_phone: str) -> int:
-    logger.info(f"Starting call log for phone: {caller_phone}")
+    """Create a new call log entry and return its ID."""
+    try:
+        caller_phone = validate_phone_number(caller_phone)
+    except ValidationError as exc:
+        logger.error("Invalid input for start_call_log: %s", exc)
+        raise
+
+    logger.info("Starting call log for phone: %s", caller_phone)
     conn = get_connection()
     try:
         cursor = conn.cursor()
@@ -210,16 +299,24 @@ def start_call_log(caller_phone: str) -> int:
         )
         log_id = cursor.fetchone()["id"]
         conn.commit()
-        logger.debug(f"Call log initialized. Log ID: {log_id}")
+        logger.debug("Call log initialized. Log ID: %d", log_id)
         return log_id
-    except Exception as e:
-        logger.error(f"Failed to start call log for {caller_phone}: {e}", exc_info=True)
-        raise e
+    except Exception as exc:
+        logger.error("Failed to start call log for %s: %s", caller_phone, exc, exc_info=True)
+        raise
     finally:
         conn.close()
 
 def end_call_log(log_id: int, transcript: str, sentiment: str, duration_seconds: int):
-    logger.info(f"Ending call log. ID: {log_id}, Sentiment: {sentiment}, Duration: {duration_seconds}s")
+    """Close an open call log with its final data."""
+    try:
+        log_id = validate_log_id(log_id)
+        duration_seconds = validate_duration(duration_seconds)
+    except ValidationError as exc:
+        logger.error("Invalid input for end_call_log: %s", exc)
+        raise
+
+    logger.info("Ending call log. ID: %d, Sentiment: %s, Duration: %ds", log_id, sentiment, duration_seconds)
     conn = get_connection()
     try:
         cursor = conn.cursor()
@@ -232,14 +329,15 @@ def end_call_log(log_id: int, transcript: str, sentiment: str, duration_seconds:
             (transcript, sentiment, duration_seconds, log_id)
         )
         conn.commit()
-        logger.debug(f"Call log {log_id} successfully closed.")
-    except Exception as e:
-        logger.error(f"Failed to close call log {log_id}: {e}", exc_info=True)
-        raise e
+        logger.debug("Call log %d successfully closed.", log_id)
+    except Exception as exc:
+        logger.error("Failed to close call log %d: %s", log_id, exc, exc_info=True)
+        raise
     finally:
         conn.close()
 
 def get_dashboard_metrics():
+    """Aggregate call and appointment statistics for the dashboard."""
     conn = get_connection()
     try:
         cursor = conn.cursor()
@@ -261,6 +359,14 @@ def get_dashboard_metrics():
             "active_appointments": active_appointments,
             "avg_duration_seconds": round(avg_duration, 1),
             "latest_calls": latest_calls
+        }
+    except Exception as exc:
+        logger.error("Error fetching dashboard metrics: %s", exc, exc_info=True)
+        return {
+            "total_calls": 0,
+            "active_appointments": 0,
+            "avg_duration_seconds": 0,
+            "latest_calls": [],
         }
     finally:
         conn.close()

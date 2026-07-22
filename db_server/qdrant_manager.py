@@ -37,6 +37,46 @@ def get_encoder():
 _qdrant_client = None
 _last_q_host = None
 
+
+# ---------------------------------------------------------------------------
+# Validation helpers (local to this module)
+# ---------------------------------------------------------------------------
+
+def _validate_file_path(file_path: str) -> str:
+    """Validate that *file_path* is a non-empty string pointing to an existing file."""
+    if not file_path or not str(file_path).strip():
+        raise FileNotFoundError("File path is required and cannot be empty.")
+    cleaned = str(file_path).strip()
+    if not os.path.exists(cleaned):
+        raise FileNotFoundError(f"Source file not found at {cleaned}")
+    return cleaned
+
+
+def _validate_collection_name(name: str) -> str:
+    """Validate that *name* is a reasonable Qdrant collection name."""
+    if not name or not str(name).strip():
+        raise ValueError("Collection name is required and cannot be empty.")
+    return str(name).strip()
+
+
+def _validate_search_params(query: str, top_k: int, threshold: float) -> tuple:
+    """Validate search parameters for Qdrant queries."""
+    if not query or not str(query).strip():
+        raise ValueError("Search query is required and cannot be empty.")
+    cleaned_query = str(query).strip()
+
+    if not isinstance(top_k, int) or top_k < 1:
+        raise ValueError(f"top_k must be a positive integer, got {top_k}.")
+    if not isinstance(threshold, (int, float)) or not (0.0 <= threshold <= 1.0):
+        raise ValueError(f"threshold must be between 0.0 and 1.0, got {threshold}.")
+
+    return cleaned_query, top_k, threshold
+
+
+# ---------------------------------------------------------------------------
+# Qdrant client
+# ---------------------------------------------------------------------------
+
 def get_qdrant_client():
     global _qdrant_client, _last_q_host
     q_host = os.environ.get("QDRANT_HOST", "db_data/qdrant_storage")
@@ -44,7 +84,7 @@ def get_qdrant_client():
     if _qdrant_client is None or q_host != _last_q_host:
         q_port = int(os.environ.get("QDRANT_PORT", "6333"))
         q_api_key = os.environ.get("QDRANT_API_KEY", None)
-        logger.info(f"Connecting to Qdrant at host: '{q_host}', port: {q_port}")
+        logger.info("Connecting to Qdrant at host: '%s', port: %d", q_host, q_port)
 
         try:
             # Check if host points to a local directory or :memory:
@@ -59,16 +99,18 @@ def get_qdrant_client():
                 else:
                     _qdrant_client = QdrantClient(host=q_host, port=q_port, api_key=q_api_key)
             logger.info("QdrantClient connection established.")
-        except Exception as e:
-            logger.error(f"Failed to connect to Qdrant: {e}", exc_info=True)
-            raise e
+        except Exception as exc:
+            logger.error("Failed to connect to Qdrant at '%s': %s", q_host, exc, exc_info=True)
+            raise
             
         _last_q_host = q_host
         
     return _qdrant_client
 
 def init_qdrant_collection(collection_name: str = "clinic_knowledge"):
-    logger.info(f"Checking if Qdrant collection '{collection_name}' exists...")
+    """Create a Qdrant collection if it does not already exist."""
+    collection_name = _validate_collection_name(collection_name)
+    logger.info("Checking if Qdrant collection '%s' exists...", collection_name)
     client = get_qdrant_client()
     vector_size = 384 
     
@@ -77,26 +119,30 @@ def init_qdrant_collection(collection_name: str = "clinic_knowledge"):
         exists = any(c.name == collection_name for c in collections)
         
         if not exists:
-            logger.info(f"Creating Qdrant collection '{collection_name}' (vector size: {vector_size})...")
+            logger.info("Creating Qdrant collection '%s' (vector size: %d)...", collection_name, vector_size)
             client.create_collection(
                 collection_name=collection_name,
                 vectors_config=VectorParams(size=vector_size, distance=Distance.COSINE),
             )
-            logger.info(f"Qdrant collection '{collection_name}' successfully initialized.")
+            logger.info("Qdrant collection '%s' successfully initialized.", collection_name)
         else:
-            logger.info(f"Qdrant collection '{collection_name}' already exists.")
-    except Exception as e:
-        logger.error(f"Error during Qdrant collection check/creation: {e}", exc_info=True)
-        raise e
+            logger.info("Qdrant collection '%s' already exists.", collection_name)
+    except Exception as exc:
+        logger.error("Error during Qdrant collection check/creation for '%s': %s", collection_name, exc, exc_info=True)
+        raise
 
 # --- Chunking & Ingestion ---
 
 def chunk_markdown_file(file_path: str, chunk_size: int = 1000, overlap: int = 120):
-    if not os.path.exists(file_path):
-        raise FileNotFoundError(f"Source file not found at {file_path}")
-        
-    with open(file_path, "r", encoding="utf-8") as f:
-        content = f.read()
+    """Parse a markdown file into overlapping text chunks grouped by heading."""
+    file_path = _validate_file_path(file_path)
+
+    try:
+        with open(file_path, "r", encoding="utf-8") as f:
+            content = f.read()
+    except OSError as exc:
+        logger.error("Failed to read markdown file '%s': %s", file_path, exc)
+        raise
 
     lines = content.split("\n")
     sections = []
@@ -116,7 +162,7 @@ def chunk_markdown_file(file_path: str, chunk_size: int = 1000, overlap: int = 1
     if current_lines:
         sections.append((current_header, "\n".join(current_lines).strip()))
 
-    logger.info(f"Chunking markdown file '{file_path}': Parsed {len(sections)} sections.")
+    logger.info("Chunking markdown file '%s': Parsed %d sections.", file_path, len(sections))
     chunks = []
     for header, body in sections:
         if not body:
@@ -146,14 +192,27 @@ def chunk_markdown_file(file_path: str, chunk_size: int = 1000, overlap: int = 1
                 
     return chunks
 
+def _encode_chunk(encoder, text: str, chunk_index: int) -> list:
+    """Encode a single text chunk into a vector, with per-chunk error handling."""
+    try:
+        res = encoder.encode(text)
+        return res.tolist() if hasattr(res, "tolist") else list(res)
+    except Exception as exc:
+        logger.error("Failed to encode chunk %d: %s", chunk_index, exc, exc_info=True)
+        raise
+
 def ingest_knowledge_document(file_path: str, collection_name: str = "clinic_knowledge"):
-    logger.info(f"Starting ingestion of knowledge document: {file_path} into collection: '{collection_name}'")
+    """Chunk a markdown file, encode each chunk, and upsert vectors into Qdrant."""
+    file_path = _validate_file_path(file_path)
+    collection_name = _validate_collection_name(collection_name)
+
+    logger.info("Starting ingestion of knowledge document: %s into collection: '%s'", file_path, collection_name)
     init_qdrant_collection(collection_name)
     
     try:
         chunks = chunk_markdown_file(file_path)
         if not chunks:
-            logger.warning(f"No chunks generated from knowledge document '{file_path}'. Ingestion skipped.")
+            logger.warning("No chunks generated from knowledge document '%s'. Ingestion skipped.", file_path)
             return
             
         client = get_qdrant_client()
@@ -162,8 +221,7 @@ def ingest_knowledge_document(file_path: str, collection_name: str = "clinic_kno
         points = []
         for idx, chunk in enumerate(chunks):
             text = chunk["content"]
-            res = encoder.encode(text)
-            vector = res.tolist() if hasattr(res, "tolist") else list(res)
+            vector = _encode_chunk(encoder, text, idx)
             
             points.append(
                 models.PointStruct(
@@ -180,20 +238,28 @@ def ingest_knowledge_document(file_path: str, collection_name: str = "clinic_kno
                 )
             )
             
-        logger.info(f"Upserting {len(points)} vector points into Qdrant...")
+        logger.info("Upserting %d vector points into Qdrant...", len(points))
         client.upsert(
             collection_name=collection_name,
             points=points
         )
-        logger.info(f"Successfully ingested {len(points)} chunks into Qdrant '{collection_name}'.")
-    except Exception as e:
-        logger.error(f"Ingestion failed for document {file_path}: {e}", exc_info=True)
-        raise e
+        logger.info("Successfully ingested %d chunks into Qdrant '%s'.", len(points), collection_name)
+    except Exception as exc:
+        logger.error("Ingestion failed for document %s: %s", file_path, exc, exc_info=True)
+        raise
 
 # --- Retrieval ---
 
 def search_knowledge(query: str, collection_name: str = "clinic_knowledge", top_k: int = 3, threshold: float = 0.70):
-    logger.info(f"Searching Qdrant '{collection_name}' for query: '{query}' (top_k: {top_k}, threshold: {threshold})")
+    """Search the Qdrant collection for semantically matching chunks."""
+    try:
+        query, top_k, threshold = _validate_search_params(query, top_k, threshold)
+    except ValueError as exc:
+        logger.error("Invalid search parameters: %s", exc)
+        return []
+
+    collection_name = _validate_collection_name(collection_name)
+    logger.info("Searching Qdrant '%s' for query: '%s' (top_k: %d, threshold: %.2f)", collection_name, query, top_k, threshold)
     client = get_qdrant_client()
     encoder = get_encoder()
     
@@ -217,10 +283,10 @@ def search_knowledge(query: str, collection_name: str = "clinic_knowledge", top_
                     "score": round(hit.score, 4)
                 })
                 
-        logger.info(f"Qdrant query finished. Found {len(results.points)} results, {len(hits)} matched threshold.")
+        logger.info("Qdrant query finished. Found %d results, %d matched threshold.", len(results.points), len(hits))
         return hits
-    except Exception as e:
-        logger.error(f"Qdrant search query failed: {e}", exc_info=True)
+    except Exception as exc:
+        logger.error("Qdrant search query failed for '%s': %s", query, exc, exc_info=True)
         return []
 
 if __name__ == "__main__":

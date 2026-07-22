@@ -86,5 +86,25 @@ Our clinical office is located at 123 Radiant Lane.
             if os.path.exists(temp_file_path):
                 os.remove(temp_file_path)
 
+    # --- Validation rejection tests ---
+
+    def test_search_empty_query(self):
+        """Validation should reject an empty search query and return an empty list."""
+        results = qdrant_manager.search_knowledge(query="", collection_name="test_collection")
+        self.assertEqual(results, [])
+
+        results_whitespace = qdrant_manager.search_knowledge(query="   ", collection_name="test_collection")
+        self.assertEqual(results_whitespace, [])
+
+    def test_chunk_nonexistent_file(self):
+        """Validation should raise FileNotFoundError for a missing file."""
+        with self.assertRaises(FileNotFoundError):
+            qdrant_manager.chunk_markdown_file("/nonexistent/path/file.md")
+
+    def test_chunk_empty_file_path(self):
+        """Validation should raise FileNotFoundError for an empty file path."""
+        with self.assertRaises(FileNotFoundError):
+            qdrant_manager.chunk_markdown_file("")
+
 if __name__ == "__main__":
     unittest.main()
